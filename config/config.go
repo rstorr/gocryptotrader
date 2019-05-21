@@ -73,7 +73,7 @@ const (
 // Variables here are used for configuration
 var (
 	Cfg            Config
-	IsInitialSetup atomic.Value
+	IsInitialSetup bool
 	testBypass     bool
 	m              sync.Mutex
 )
@@ -1298,7 +1298,10 @@ func (c *Config) ReadConfig(configPath string) error {
 		}
 
 		if c.EncryptConfig == configFileEncryptionPrompt {
-			IsInitialSetup.Store(true)
+			m.Lock()
+			IsInitialSetup = true
+			m.Unlock()
+
 			if c.PromptForConfigEncryption() {
 				c.EncryptConfig = configFileEncryptionEnabled
 				return c.SaveConfig(defaultPath)
@@ -1310,7 +1313,7 @@ func (c *Config) ReadConfig(configPath string) error {
 			if errCounter >= configMaxAuthFailres {
 				return errors.New("failed to decrypt config after 3 attempts")
 			}
-			key, err := PromptForConfigKey(IsInitialSetup.Load().(bool))
+			key, err := PromptForConfigKey(IsInitialSetup)
 			if err != nil {
 				log.Errorf("PromptForConfigKey err: %s", err)
 				errCounter++
@@ -1355,12 +1358,12 @@ func (c *Config) SaveConfig(configPath string) error {
 	if c.EncryptConfig == configFileEncryptionEnabled {
 		var key []byte
 
-		if IsInitialSetup.Load().(bool) {
+		if IsInitialSetup {
 			key, err = PromptForConfigKey(true)
 			if err != nil {
 				return err
 			}
-			IsInitialSetup.Store(false)
+			IsInitialSetup = false
 		}
 
 		payload, err = EncryptConfigFile(payload, key)
