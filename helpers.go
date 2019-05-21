@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 
+	"github.com/thrasher-/gocryptotrader/config"
 	"github.com/thrasher-/gocryptotrader/currency"
 	exchange "github.com/thrasher-/gocryptotrader/exchanges"
 	"github.com/thrasher-/gocryptotrader/exchanges/orderbook"
@@ -17,12 +18,13 @@ import (
 // or disabled exchanges
 func GetAllAvailablePairs(enabledExchangesOnly bool) currency.Pairs {
 	var pairList currency.Pairs
-	for x := range bot.config.Exchanges {
-		if enabledExchangesOnly && !bot.config.Exchanges[x].Enabled {
+	exchangeCfg := bot.config.Exchanges.Load().([]config.ExchangeConfig)
+	for x := range exchangeCfg {
+		if enabledExchangesOnly && !exchangeCfg[x].Enabled {
 			continue
 		}
 
-		exchName := bot.config.Exchanges[x].Name
+		exchName := exchangeCfg[x].Name
 		pairs, err := bot.config.GetAvailablePairs(exchName)
 		if err != nil {
 			continue
@@ -90,11 +92,12 @@ func IsRelatablePairs(p1, p2 currency.Pair, includeUSDT bool) bool {
 func MapCurrenciesByExchange(p []currency.Pair, enabledExchangesOnly bool) map[string]currency.Pairs {
 	currencyExchange := make(map[string]currency.Pairs)
 	for x := range p {
-		for y := range bot.config.Exchanges {
-			if enabledExchangesOnly && !bot.config.Exchanges[y].Enabled {
+		exchangeCfg := bot.config.Exchanges.Load().([]config.ExchangeConfig)
+		for y := range exchangeCfg {
+			if enabledExchangesOnly && !exchangeCfg[y].Enabled {
 				continue
 			}
-			exchName := bot.config.Exchanges[y].Name
+			exchName := exchangeCfg[y].Name
 			success, err := bot.config.SupportsPair(exchName, p[x])
 			if err != nil || !success {
 				continue
@@ -121,12 +124,13 @@ func MapCurrenciesByExchange(p []currency.Pair, enabledExchangesOnly bool) map[s
 // a currency pair based on whether the exchange is enabled or not
 func GetExchangeNamesByCurrency(p currency.Pair, enabled bool) []string {
 	var exchanges []string
-	for x := range bot.config.Exchanges {
-		if enabled != bot.config.Exchanges[x].Enabled {
+	exchangeCfg := bot.config.Exchanges.Load().([]config.ExchangeConfig)
+	for x := range exchangeCfg {
+		if enabled != exchangeCfg[x].Enabled {
 			continue
 		}
 
-		exchName := bot.config.Exchanges[x].Name
+		exchName := exchangeCfg[x].Name
 		success, err := bot.config.SupportsPair(exchName, p)
 		if err != nil {
 			continue

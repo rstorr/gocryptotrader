@@ -146,7 +146,7 @@ func main() {
 	log.Debugf("Bot dry run mode: %v.\n", common.IsEnabled(bot.dryRun))
 
 	log.Debugf("Available Exchanges: %d. Enabled Exchanges: %d.\n",
-		len(bot.config.Exchanges),
+		len(bot.config.Exchanges.Load().([]config.ExchangeConfig)),
 		bot.config.CountEnabledExchanges())
 
 	common.HTTPClient = common.NewHTTPClientWithTimeout(bot.config.GlobalHTTPTimeout)

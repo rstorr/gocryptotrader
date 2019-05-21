@@ -6,6 +6,7 @@ import (
 	"sync"
 
 	"github.com/thrasher-/gocryptotrader/common"
+	"github.com/thrasher-/gocryptotrader/config"
 	exchange "github.com/thrasher-/gocryptotrader/exchanges"
 	"github.com/thrasher-/gocryptotrader/exchanges/anx"
 	"github.com/thrasher-/gocryptotrader/exchanges/binance"
@@ -219,8 +220,9 @@ func LoadExchange(name string, useWG bool, wg *sync.WaitGroup) error {
 // SetupExchanges sets up the exchanges used by the bot
 func SetupExchanges() {
 	var wg sync.WaitGroup
-	for x := range bot.config.Exchanges {
-		exch := &bot.config.Exchanges[x]
+	exchangeCfg := bot.config.Exchanges.Load().([]config.ExchangeConfig)
+	for x := range exchangeCfg {
+		exch := &exchangeCfg[x]
 		if CheckExchangeExists(exch.Name) {
 			e := GetExchangeByName(exch.Name)
 			if e == nil {

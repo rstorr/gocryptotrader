@@ -13,6 +13,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/thrasher-/gocryptotrader/common"
@@ -72,7 +73,7 @@ const (
 // Variables here are used for configuration
 var (
 	Cfg            Config
-	IsInitialSetup bool
+	IsInitialSetup atomic.Value
 	testBypass     bool
 	m              sync.Mutex
 )
@@ -115,7 +116,7 @@ type Config struct {
 	Communications    CommunicationsConfig    `json:"communications"`
 	Portfolio         portfolio.Base          `json:"portfolioAddresses"`
 	Webserver         WebserverConfig         `json:"webserver"`
-	Exchanges         []ExchangeConfig        `json:"exchanges"`
+	Exchanges         atomic.Value            `json:"exchanges"`
 	BankAccounts      []BankAccount           `json:"bankAccounts"`
 	ConnectionMonitor ConnectionMonitorConfig `json:"connectionMonitor"`
 
@@ -286,15 +287,14 @@ func (c *Config) GetCurrencyConfig() CurrencyConfig {
 // GetExchangeBankAccounts returns banking details associated with an exchange
 // for depositing funds
 func (c *Config) GetExchangeBankAccounts(exchangeName, depositingCurrency string) (BankAccount, error) {
-	m.Lock()
-	defer m.Unlock()
+	exchangesCfg := c.Exchanges.Load().([]ExchangeConfig)
 
-	for x := range c.Exchanges {
-		if strings.EqualFold(c.Exchanges[x].Name, exchangeName) {
-			for y := range c.Exchanges[x].BankAccounts {
-				if common.StringContains(c.Exchanges[x].BankAccounts[y].SupportedCurrencies,
+	for x := range exchangesCfg {
+		if strings.EqualFold(exchangesCfg[x].Name, exchangeName) {
+			for y := range exchangesCfg[x].BankAccounts {
+				if common.StringContains(exchangesCfg[x].BankAccounts[y].SupportedCurrencies,
 					depositingCurrency) {
-					return c.Exchanges[x].BankAccounts[y], nil
+					return exchangesCfg[x].BankAccounts[y], nil
 				}
 			}
 		}
@@ -307,12 +307,12 @@ func (c *Config) GetExchangeBankAccounts(exchangeName, depositingCurrency string
 // UpdateExchangeBankAccounts updates the configuration for the associated
 // exchange bank
 func (c *Config) UpdateExchangeBankAccounts(exchangeName string, bankCfg []BankAccount) error {
-	m.Lock()
-	defer m.Unlock()
+	exchangesCfg := c.Exchanges.Load().([]ExchangeConfig)
 
-	for i := range c.Exchanges {
-		if strings.EqualFold(c.Exchanges[i].Name, exchangeName) {
-			c.Exchanges[i].BankAccounts = bankCfg
+	for i := range exchangesCfg {
+		if strings.EqualFold(exchangesCfg[i].Name, exchangeName) {
+			exchangesCfg[i].BankAccounts = bankCfg
+			c.Exchanges.Store(exchangesCfg)
 			return nil
 		}
 	}
@@ -645,9 +645,10 @@ func (c *Config) GetEnabledPairs(exchName string) (currency.Pairs, error) {
 // GetEnabledExchanges returns a list of enabled exchanges
 func (c *Config) GetEnabledExchanges() []string {
 	var enabledExchs []string
-	for i := range c.Exchanges {
-		if c.Exchanges[i].Enabled {
-			enabledExchs = append(enabledExchs, c.Exchanges[i].Name)
+	exchangesCfg := c.Exchanges.Load().([]ExchangeConfig)
+	for i := range exchangesCfg {
+		if exchangesCfg[i].Enabled {
+			enabledExchs = append(enabledExchs, exchangesCfg[i].Name)
 		}
 	}
 	return enabledExchs
@@ -656,9 +657,10 @@ func (c *Config) GetEnabledExchanges() []string {
 // GetDisabledExchanges returns a list of disabled exchanges
 func (c *Config) GetDisabledExchanges() []string {
 	var disabledExchs []string
-	for i := range c.Exchanges {
-		if !c.Exchanges[i].Enabled {
-			disabledExchs = append(disabledExchs, c.Exchanges[i].Name)
+	exchangesCfg := c.Exchanges.Load().([]ExchangeConfig)
+	for i := range exchangesCfg {
+		if !exchangesCfg[i].Enabled {
+			disabledExchs = append(disabledExchs, exchangesCfg[i].Name)
 		}
 	}
 	return disabledExchs
@@ -667,8 +669,9 @@ func (c *Config) GetDisabledExchanges() []string {
 // CountEnabledExchanges returns the number of exchanges that are enabled.
 func (c *Config) CountEnabledExchanges() int {
 	counter := 0
-	for i := range c.Exchanges {
-		if c.Exchanges[i].Enabled {
+	exchangesCfg := c.Exchanges.Load().([]ExchangeConfig)
+	for i := range exchangesCfg {
+		if exchangesCfg[i].Enabled {
 			counter++
 		}
 	}
@@ -702,18 +705,15 @@ func (c *Config) GetCurrencyPairDisplayConfig() *CurrencyPairFormatConfig {
 
 // GetAllExchangeConfigs returns all exchange configurations
 func (c *Config) GetAllExchangeConfigs() []ExchangeConfig {
-	m.Lock()
-	defer m.Unlock()
-	return c.Exchanges
+	return c.Exchanges.Load().([]ExchangeConfig)
 }
 
 // GetExchangeConfig returns exchange configurations by its indivdual name
 func (c *Config) GetExchangeConfig(name string) (ExchangeConfig, error) {
-	m.Lock()
-	defer m.Unlock()
-	for i := range c.Exchanges {
-		if strings.EqualFold(c.Exchanges[i].Name, name) {
-			return c.Exchanges[i], nil
+	exchangesCfg := c.Exchanges.Load().([]ExchangeConfig)
+	for i := range exchangesCfg {
+		if strings.EqualFold(exchangesCfg[i].Name, name) {
+			return exchangesCfg[i], nil
 		}
 	}
 	return ExchangeConfig{}, fmt.Errorf(ErrExchangeNotFound, name)
@@ -745,11 +745,10 @@ func (c *Config) GetPrimaryForexProvider() string {
 
 // UpdateExchangeConfig updates exchange configurations
 func (c *Config) UpdateExchangeConfig(e *ExchangeConfig) error {
-	m.Lock()
-	defer m.Unlock()
-	for i := range c.Exchanges {
-		if strings.EqualFold(c.Exchanges[i].Name, e.Name) {
-			c.Exchanges[i] = *e
+	exchangesCfg := c.Exchanges.Load().([]ExchangeConfig)
+	for i := range exchangesCfg {
+		if strings.EqualFold(exchangesCfg[i].Name, e.Name) {
+			exchangesCfg[i] = *e
 			return nil
 		}
 	}
@@ -759,104 +758,105 @@ func (c *Config) UpdateExchangeConfig(e *ExchangeConfig) error {
 // CheckExchangeConfigValues returns configuation values for all enabled
 // exchanges
 func (c *Config) CheckExchangeConfigValues() error {
+	exchangesCfg := c.Exchanges.Load().([]ExchangeConfig)
 	exchanges := 0
-	for i := range c.Exchanges {
-		if strings.EqualFold(c.Exchanges[i].Name, "GDAX") {
-			c.Exchanges[i].Name = "CoinbasePro"
+	for i := range exchangesCfg {
+		if strings.EqualFold(exchangesCfg[i].Name, "GDAX") {
+			exchangesCfg[i].Name = "CoinbasePro"
 		}
 
-		if c.Exchanges[i].WebsocketURL != WebsocketURLNonDefaultMessage {
-			if c.Exchanges[i].WebsocketURL == "" {
-				c.Exchanges[i].WebsocketURL = WebsocketURLNonDefaultMessage
+		if exchangesCfg[i].WebsocketURL != WebsocketURLNonDefaultMessage {
+			if exchangesCfg[i].WebsocketURL == "" {
+				exchangesCfg[i].WebsocketURL = WebsocketURLNonDefaultMessage
 			}
 		}
 
-		if c.Exchanges[i].APIURL != APIURLNonDefaultMessage {
-			if c.Exchanges[i].APIURL == "" {
+		if exchangesCfg[i].APIURL != APIURLNonDefaultMessage {
+			if exchangesCfg[i].APIURL == "" {
 				// Set default if nothing set
-				c.Exchanges[i].APIURL = APIURLNonDefaultMessage
+				exchangesCfg[i].APIURL = APIURLNonDefaultMessage
 			}
 		}
 
-		if c.Exchanges[i].APIURLSecondary != APIURLNonDefaultMessage {
-			if c.Exchanges[i].APIURLSecondary == "" {
+		if exchangesCfg[i].APIURLSecondary != APIURLNonDefaultMessage {
+			if exchangesCfg[i].APIURLSecondary == "" {
 				// Set default if nothing set
-				c.Exchanges[i].APIURLSecondary = APIURLNonDefaultMessage
+				exchangesCfg[i].APIURLSecondary = APIURLNonDefaultMessage
 			}
 		}
 
-		if c.Exchanges[i].Enabled {
-			if c.Exchanges[i].Name == "" {
+		if exchangesCfg[i].Enabled {
+			if exchangesCfg[i].Name == "" {
 				return fmt.Errorf(ErrExchangeNameEmpty, i)
 			}
-			if len(c.Exchanges[i].AvailablePairs) == 0 {
-				return fmt.Errorf(ErrExchangeAvailablePairsEmpty, c.Exchanges[i].Name)
+			if len(exchangesCfg[i].AvailablePairs) == 0 {
+				return fmt.Errorf(ErrExchangeAvailablePairsEmpty, exchangesCfg[i].Name)
 			}
-			if len(c.Exchanges[i].EnabledPairs) == 0 {
-				return fmt.Errorf(ErrExchangeEnabledPairsEmpty, c.Exchanges[i].Name)
+			if len(exchangesCfg[i].EnabledPairs) == 0 {
+				return fmt.Errorf(ErrExchangeEnabledPairsEmpty, exchangesCfg[i].Name)
 			}
-			if len(c.Exchanges[i].BaseCurrencies) == 0 {
-				return fmt.Errorf(ErrExchangeBaseCurrenciesEmpty, c.Exchanges[i].Name)
+			if len(exchangesCfg[i].BaseCurrencies) == 0 {
+				return fmt.Errorf(ErrExchangeBaseCurrenciesEmpty, exchangesCfg[i].Name)
 			}
-			if c.Exchanges[i].AuthenticatedAPISupport { // non-fatal error
-				if c.Exchanges[i].APIKey == "" || c.Exchanges[i].APISecret == "" ||
-					c.Exchanges[i].APIKey == DefaultUnsetAPIKey ||
-					c.Exchanges[i].APISecret == DefaultUnsetAPISecret {
-					c.Exchanges[i].AuthenticatedAPISupport = false
-					log.Warnf(WarningExchangeAuthAPIDefaultOrEmptyValues, c.Exchanges[i].Name)
-				} else if c.Exchanges[i].Name == "ITBIT" || c.Exchanges[i].Name == "Bitstamp" || c.Exchanges[i].Name == "COINUT" || c.Exchanges[i].Name == "CoinbasePro" {
-					if c.Exchanges[i].ClientID == "" || c.Exchanges[i].ClientID == "ClientID" {
-						c.Exchanges[i].AuthenticatedAPISupport = false
-						log.Warnf(WarningExchangeAuthAPIDefaultOrEmptyValues, c.Exchanges[i].Name)
+			if exchangesCfg[i].AuthenticatedAPISupport { // non-fatal error
+				if exchangesCfg[i].APIKey == "" || exchangesCfg[i].APISecret == "" ||
+					exchangesCfg[i].APIKey == DefaultUnsetAPIKey ||
+					exchangesCfg[i].APISecret == DefaultUnsetAPISecret {
+					exchangesCfg[i].AuthenticatedAPISupport = false
+					log.Warnf(WarningExchangeAuthAPIDefaultOrEmptyValues, exchangesCfg[i].Name)
+				} else if exchangesCfg[i].Name == "ITBIT" || exchangesCfg[i].Name == "Bitstamp" || exchangesCfg[i].Name == "COINUT" || exchangesCfg[i].Name == "CoinbasePro" {
+					if exchangesCfg[i].ClientID == "" || exchangesCfg[i].ClientID == "ClientID" {
+						exchangesCfg[i].AuthenticatedAPISupport = false
+						log.Warnf(WarningExchangeAuthAPIDefaultOrEmptyValues, exchangesCfg[i].Name)
 					}
 				}
 			}
-			if !c.Exchanges[i].SupportsAutoPairUpdates {
-				lastUpdated := common.UnixTimestampToTime(c.Exchanges[i].PairsLastUpdated)
+			if !exchangesCfg[i].SupportsAutoPairUpdates {
+				lastUpdated := common.UnixTimestampToTime(exchangesCfg[i].PairsLastUpdated)
 				lastUpdated = lastUpdated.AddDate(0, 0, configPairsLastUpdatedWarningThreshold)
 				if lastUpdated.Unix() <= time.Now().Unix() {
-					log.Warnf(WarningPairsLastUpdatedThresholdExceeded, c.Exchanges[i].Name, configPairsLastUpdatedWarningThreshold)
+					log.Warnf(WarningPairsLastUpdatedThresholdExceeded, exchangesCfg[i].Name, configPairsLastUpdatedWarningThreshold)
 				}
 			}
 
-			if c.Exchanges[i].HTTPTimeout <= 0 {
-				log.Warnf("Exchange %s HTTP Timeout value not set, defaulting to %v.", c.Exchanges[i].Name, configDefaultHTTPTimeout)
-				c.Exchanges[i].HTTPTimeout = configDefaultHTTPTimeout
+			if exchangesCfg[i].HTTPTimeout <= 0 {
+				log.Warnf("Exchange %s HTTP Timeout value not set, defaulting to %v.", exchangesCfg[i].Name, configDefaultHTTPTimeout)
+				exchangesCfg[i].HTTPTimeout = configDefaultHTTPTimeout
 			}
 
-			err := c.CheckPairConsistency(c.Exchanges[i].Name)
+			err := c.CheckPairConsistency(exchangesCfg[i].Name)
 			if err != nil {
-				log.Errorf("Exchange %s: CheckPairConsistency error: %s", c.Exchanges[i].Name, err)
+				log.Errorf("Exchange %s: CheckPairConsistency error: %s", exchangesCfg[i].Name, err)
 			}
 
-			if len(c.Exchanges[i].BankAccounts) == 0 {
-				c.Exchanges[i].BankAccounts = append(c.Exchanges[i].BankAccounts, BankAccount{})
+			if len(exchangesCfg[i].BankAccounts) == 0 {
+				exchangesCfg[i].BankAccounts = append(exchangesCfg[i].BankAccounts, BankAccount{})
 			} else {
-				for y := range c.Exchanges[i].BankAccounts {
-					bankAccount := &c.Exchanges[i].BankAccounts[y]
+				for y := range exchangesCfg[i].BankAccounts {
+					bankAccount := &exchangesCfg[i].BankAccounts[y]
 					if bankAccount.Enabled {
 						if bankAccount.BankName == "" || bankAccount.BankAddress == "" {
 							log.Warnf("banking details for %s is enabled but variables not set",
-								c.Exchanges[i].Name)
+								exchangesCfg[i].Name)
 							bankAccount.Enabled = false
 						}
 
 						if bankAccount.AccountName == "" || bankAccount.AccountNumber == "" {
 							log.Warnf("banking account details for %s variables not set",
-								c.Exchanges[i].Name)
+								exchangesCfg[i].Name)
 							bankAccount.Enabled = false
 						}
 
 						if bankAccount.SupportedCurrencies == "" {
 							log.Warnf("banking account details for %s acceptable funding currencies not set",
-								c.Exchanges[i].Name)
+								exchangesCfg[i].Name)
 							bankAccount.Enabled = false
 						}
 
 						if bankAccount.BSBNumber == "" && bankAccount.IBAN == "" &&
 							bankAccount.SWIFTCode == "" {
 							log.Warnf("banking account details for %s critical banking numbers not set",
-								c.Exchanges[i].Name)
+								exchangesCfg[i].Name)
 							bankAccount.Enabled = false
 						}
 					}
@@ -1030,13 +1030,14 @@ func (c *Config) CheckCurrencyConfigValues() error {
 func (c *Config) RetrieveConfigCurrencyPairs(enabledOnly bool) error {
 	cryptoCurrencies := c.Currency.Cryptocurrencies
 	fiatCurrencies := currency.GetFiatCurrencies()
+	exchangesCfg := c.Exchanges.Load().([]ExchangeConfig)
 
-	for x := range c.Exchanges {
-		if !c.Exchanges[x].Enabled && enabledOnly {
+	for x := range exchangesCfg {
+		if !exchangesCfg[x].Enabled && enabledOnly {
 			continue
 		}
 
-		baseCurrencies := c.Exchanges[x].BaseCurrencies
+		baseCurrencies := exchangesCfg[x].BaseCurrencies
 		for y := range baseCurrencies {
 			if !fiatCurrencies.Contains(baseCurrencies[y]) {
 				fiatCurrencies = append(fiatCurrencies, baseCurrencies[y])
@@ -1044,13 +1045,13 @@ func (c *Config) RetrieveConfigCurrencyPairs(enabledOnly bool) error {
 		}
 	}
 
-	for x := range c.Exchanges {
+	for x := range exchangesCfg {
 		var pairs []currency.Pair
 		var err error
-		if !c.Exchanges[x].Enabled && enabledOnly {
-			pairs, err = c.GetEnabledPairs(c.Exchanges[x].Name)
+		if !exchangesCfg[x].Enabled && enabledOnly {
+			pairs, err = c.GetEnabledPairs(exchangesCfg[x].Name)
 		} else {
-			pairs, err = c.GetAvailablePairs(c.Exchanges[x].Name)
+			pairs, err = c.GetAvailablePairs(exchangesCfg[x].Name)
 		}
 
 		if err != nil {
@@ -1297,9 +1298,7 @@ func (c *Config) ReadConfig(configPath string) error {
 		}
 
 		if c.EncryptConfig == configFileEncryptionPrompt {
-			m.Lock()
-			IsInitialSetup = true
-			m.Unlock()
+			IsInitialSetup.Store(true)
 			if c.PromptForConfigEncryption() {
 				c.EncryptConfig = configFileEncryptionEnabled
 				return c.SaveConfig(defaultPath)
@@ -1311,7 +1310,7 @@ func (c *Config) ReadConfig(configPath string) error {
 			if errCounter >= configMaxAuthFailres {
 				return errors.New("failed to decrypt config after 3 attempts")
 			}
-			key, err := PromptForConfigKey(IsInitialSetup)
+			key, err := PromptForConfigKey(IsInitialSetup.Load().(bool))
 			if err != nil {
 				log.Errorf("PromptForConfigKey err: %s", err)
 				errCounter++
@@ -1356,12 +1355,12 @@ func (c *Config) SaveConfig(configPath string) error {
 	if c.EncryptConfig == configFileEncryptionEnabled {
 		var key []byte
 
-		if IsInitialSetup {
+		if IsInitialSetup.Load().(bool) {
 			key, err = PromptForConfigKey(true)
 			if err != nil {
 				return err
 			}
-			IsInitialSetup = false
+			IsInitialSetup.Store(false)
 		}
 
 		payload, err = EncryptConfigFile(payload, key)
@@ -1427,7 +1426,7 @@ func (c *Config) UpdateConfig(configPath string, newCfg *Config) error {
 	c.Portfolio = newCfg.Portfolio
 	c.Communications = newCfg.Communications
 	c.Webserver = newCfg.Webserver
-	c.Exchanges = newCfg.Exchanges
+	c.Exchanges.Store(newCfg.Exchanges)
 
 	err = c.SaveConfig(configPath)
 	if err != nil {
